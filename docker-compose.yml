@@ -1,0 +1,45 @@
+services:
+  mongodb:
+    # Atlas Local 8.2+ bundles mongod + mongot (native $vectorSearch / $search).
+    image: ${MONGO_IMAGE:-mongodb/mongodb-atlas-local:8.2}
+    container_name: recql-mongodb-atlas-test
+    ports:
+      - "${MONGO_PORT:-27018}:27017"
+    environment:
+      MONGODB_INITDB_DATABASE: recql
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 10s
+      retries: 36
+      start_period: 40s
+    volumes:
+      - recql_mongo_test_data:/data/db
+      - recql_mongo_test_configdb:/data/configdb
+      - recql_mongo_test_mongot:/data/mongot
+
+  conformance:
+    build:
+      context: .
+      dockerfile: Dockerfile.conformance
+    container_name: recql-mongodb-conformance-atlas
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      # directConnection helps single-node Atlas Local replica sets.
+      RECQL_MONGODB_DSN: mongodb://mongodb:27017/recql?directConnection=true
+      RECQL_CORE_MOUNT: /deps/core
+      RECQL_PLAYGROUND_MOUNT: /deps/playground
+      RECQL_PACK_MOUNT: /pack
+    volumes:
+      - ./:/pack
+      - ${RECQL_CORE_PATH:-../recql-python-core}:/deps/core:ro
+      - ${RECQL_PLAYGROUND_PATH:-../recql-playground}:/deps/playground:ro
+    working_dir: /pack
+    profiles: ["conformance"]
+
+volumes:
+  recql_mongo_test_data:
+  recql_mongo_test_configdb:
+  recql_mongo_test_mongot:

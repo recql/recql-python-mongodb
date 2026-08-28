@@ -1,0 +1,23 @@
+# mongot for local Community Server conformance (see docker-compose.community.yml).
+syncSource:
+  replicaSet:
+    hostAndPort: "mongodb:27017"
+    scramAuth:
+      username: mongotUser
+      passwordFile: "/etc/mongot/secrets/passwordFile"
+      authSource: admin
+      tls:
+        enabled: false
+storage:
+  dataPath: "/var/lib/mongot"
+server:
+  grpc:
+    address: "0.0.0.0:27028"
+    tls:
+      mode: "disabled"
+metrics:
+  enabled: false
+healthCheck:
+  address: "0.0.0.0:8080"
+logging:
+  verbosity: INFO

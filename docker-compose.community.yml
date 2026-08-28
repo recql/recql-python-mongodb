@@ -1,0 +1,81 @@
+# Community Server 8.2 + mongot (self-hosted parity). Default CI uses Atlas Local.
+services:
+  mongodb:
+    image: ${MONGO_IMAGE:-mongodb/mongodb-community-server:8.2-ubi9}
+    container_name: recql-mongodb-community
+    ports:
+      - "${MONGO_PORT:-27018}:27017"
+    volumes:
+      - recql_mongo_community_data:/data/db
+      - ./docker/community/keyfile:/etc/mongodb/keyfile:ro
+      - ./docker/community/docker-compose-entrypoint.sh:/docker-compose-entrypoint.sh:ro
+    entrypoint: ["/bin/bash", "/docker-compose-entrypoint.sh"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mongosh",
+          "-u",
+          "admin",
+          "-p",
+          "adminPassword",
+          "--authenticationDatabase",
+          "admin",
+          "--eval",
+          "db.adminCommand('ping')",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 45
+      start_period: 15s
+
+  mongot:
+    image: ${MONGOT_IMAGE:-mongodb/mongodb-community-search:latest}
+    container_name: recql-mongot-community
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - recql_mongot_community_data:/var/lib/mongot
+      - ./docker/community/mongot-config.yml:/etc/mongot/config-readonly.yml:ro
+      - ./docker/community/passwordFile:/etc/mongot/secrets/passwordFile-readonly:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cp /etc/mongot/config-readonly.yml /var/lib/mongot/config.yml
+        cp /etc/mongot/secrets/passwordFile-readonly /var/lib/mongot/passwordFile
+        chmod 400 /var/lib/mongot/passwordFile
+        sed -i 's|/etc/mongot/secrets/passwordFile|/var/lib/mongot/passwordFile|g' /var/lib/mongot/config.yml
+        exec /mongot-community/mongot --config /var/lib/mongot/config.yml
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+
+  conformance:
+    build:
+      context: .
+      dockerfile: Dockerfile.conformance
+    container_name: recql-mongodb-conformance-community
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      mongot:
+        condition: service_healthy
+    environment:
+      RECQL_MONGODB_DSN: mongodb://recql:recql@mongodb:27017/recql?directConnection=true&authSource=admin
+      RECQL_CORE_MOUNT: /deps/core
+      RECQL_PLAYGROUND_MOUNT: /deps/playground
+      RECQL_PACK_MOUNT: /pack
+    volumes:
+      - ./:/pack
+      - ${RECQL_CORE_PATH:-../recql-python-core}:/deps/core:ro
+      - ${RECQL_PLAYGROUND_PATH:-../recql-playground}:/deps/playground:ro
+    working_dir: /pack
+    profiles: ["conformance"]
+
+volumes:
+  recql_mongo_community_data:
+  recql_mongot_community_data:

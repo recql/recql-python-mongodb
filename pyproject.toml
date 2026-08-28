@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "recql-mongodb"
+version = "0.1.0"
+description = "RecQL mongodb backend plugin"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+  "recql>=0.1.0",
+  "motor>=3.3",
+  "pymongo>=4.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[project.urls]
+Homepage = "https://github.com/recql/recql-python-mongodb"
+Repository = "https://github.com/recql/recql-python-mongodb"
+
+[project.entry-points."recql.backends"]
+mongodb = "recql_mongodb:open_registry"
+mongo = "recql_mongodb:open_registry"
+
+[project.entry-points."recql.connectors"]
+mongodb = "recql_mongodb.connect:open_connection"
+mongo = "recql_mongodb.connect:open_connection"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["recql_mongodb*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+pythonpath = ["."]

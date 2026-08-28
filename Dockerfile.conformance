@@ -1,0 +1,12 @@
+FROM python:3.12-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY docker/conformance-entrypoint.sh /usr/local/bin/conformance-entrypoint.sh
+RUN chmod +x /usr/local/bin/conformance-entrypoint.sh
+
+WORKDIR /pack
+ENTRYPOINT ["/usr/local/bin/conformance-entrypoint.sh"]
+CMD ["tests/", "-q"]
