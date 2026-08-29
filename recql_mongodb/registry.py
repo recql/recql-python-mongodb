@@ -48,7 +48,7 @@ async def mongodb_registry(
     cfg = dict(plugin_cfg or {})
     db = handle
     resolved = bindings or (
-        bindings_from_catalog(catalog)
+        bindings_from_catalog(catalog, backend="mongodb")
         if catalog is not None
         else default_fixture_bindings(backend="mongodb")
     )
