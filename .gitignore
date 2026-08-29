@@ -8,3 +8,8 @@ build/
 .pytest_cache/
 .mypy_cache/
 .env
+
+*.swp
+.*.swp
+*~
+.DS_Store
