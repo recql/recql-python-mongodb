@@ -182,6 +182,71 @@ class MongoDBSimilarityRetriever(Retriever):
     def supports_prefilter(self, expr: A.Expr | str | None) -> bool:
         return supports_prefilter("similarity", expr)
 
+    async def lookup_vector(
+        self,
+        embedding_ref: str,
+        entity_type: str,
+        entity_id: str,
+        *,
+        req: RetrieveRequest | None = None,
+    ) -> list[float] | None:
+        if entity_type == "user":
+            doc = await self.db.als_user_embeddings.find_one({"user_id": str(entity_id)})
+        else:
+            doc = await self.db.als_item_embeddings.find_one({"item_id": str(entity_id)})
+            if doc is None:
+                doc = await self.db.text_embeddings.find_one({
+                    "embedding_name": str(embedding_ref),
+                    "entity_id": str(entity_id),
+                })
+        if doc is not None and doc.get("embedding") is not None:
+            return as_float_vector(doc["embedding"])
+        return None
+
+    async def lookup_vectors(
+        self,
+        embedding_ref: str,
+        entity_type: str,
+        entity_ids: list[str],
+        *,
+        req: RetrieveRequest | None = None,
+    ) -> dict[str, list[float]]:
+        out: dict[str, list[float]] = {}
+        str_ids = [str(x) for x in entity_ids]
+        if entity_type == "user":
+            cursor = self.db.als_user_embeddings.find({"user_id": {"$in": str_ids}})
+            async for doc in cursor:
+                uid = str(doc.get("user_id"))
+                if doc.get("embedding"):
+                    out[uid] = as_float_vector(doc["embedding"])
+        else:
+            cursor = self.db.als_item_embeddings.find({"item_id": {"$in": str_ids}})
+            async for doc in cursor:
+                iid = str(doc.get("item_id"))
+                if doc.get("embedding"):
+                    out[iid] = as_float_vector(doc["embedding"])
+            missing = [i for i in str_ids if i not in out]
+            if missing:
+                cursor2 = self.db.text_embeddings.find({
+                    "embedding_name": str(embedding_ref),
+                    "entity_id": {"$in": missing},
+                })
+                async for doc in cursor2:
+                    eid = str(doc.get("entity_id"))
+                    if doc.get("embedding"):
+                        out[eid] = as_float_vector(doc["embedding"])
+        return out
+
+    async def lookup_interactions(
+        self,
+        user_id: str,
+        limit: int = 10,
+        *,
+        req: RetrieveRequest | None = None,
+    ) -> list[str]:
+        cursor = self.db.interactions.find({"user_id": str(user_id)}).sort([("created_at", -1)]).limit(limit)
+        return [str(doc.get("item_id")) async for doc in cursor]
+
     async def retrieve(self, req: RetrieveRequest) -> RetrieveBag:
         step = req.step
         name = getattr(step, "name", None) or "similarity"
@@ -196,25 +261,43 @@ class MongoDBSimilarityRetriever(Retriever):
 
         qvec: list[float] | None = None
         exclude_id: str | None = None
-        if etype == "precomputed_user":
+        search_coll = self.db.als_item_embeddings
+        index_name = ALS_ITEM_VECTOR_INDEX
+        id_field = "item_id"
+
+        qvec_raw = getattr(step, "query_vector", None) or (
+            req.params.get("__query_vector__") if req.params else None
+        )
+        if qvec_raw is None and etype == "vector":
+            qvec_raw = getattr(enc, "vector", None)
+
+        if qvec_raw is not None:
+            qvec = as_float_vector(qvec_raw)
+        elif etype == "precomputed_user":
             uid = str(_resolve_param(enc.input_user_id, req.params or {}))
-            doc = await self.db.als_user_embeddings.find_one({"user_id": uid})
-            if doc is None:
+            qvec = await self.lookup_vector(str(emb_ref), "user", uid, req=req)
+            if qvec is None:
                 return RetrieveBag(name=str(name), candidates=[])
-            qvec = as_float_vector(doc.get("embedding"))
-            search_coll = self.db.als_item_embeddings
-            index_name = ALS_ITEM_VECTOR_INDEX
-            id_field = "item_id"
         elif etype == "precomputed_item":
             iid = str(_resolve_param(enc.input_item_id, req.params or {}))
             exclude_id = iid
-            doc = await self.db.als_item_embeddings.find_one({"item_id": iid})
-            if doc is None:
+            qvec = await self.lookup_vector(str(emb_ref), "item", iid, req=req)
+            if qvec is None:
                 return RetrieveBag(name=str(name), candidates=[])
-            qvec = as_float_vector(doc.get("embedding"))
-            search_coll = self.db.als_item_embeddings
-            index_name = ALS_ITEM_VECTOR_INDEX
-            id_field = "item_id"
+        elif etype == "interaction_pooling":
+            from recql.encode.pooling import pool_vectors
+
+            uid = str(_resolve_param(enc.input_user_id, req.params or {}))
+            trunc = int(getattr(enc, "truncate_interactions", 10) or 10)
+            item_ids = await self.lookup_interactions(uid, limit=trunc, req=req)
+            if not item_ids:
+                return RetrieveBag(name=str(name), candidates=[])
+            vecs_map = await self.lookup_vectors(str(emb_ref), "item", item_ids, req=req)
+            vec_list = [vecs_map[i] for i in item_ids if i in vecs_map]
+            if not vec_list:
+                return RetrieveBag(name=str(name), candidates=[])
+            p_func = str(getattr(enc, "pooling_function", "mean") or "mean")
+            qvec = pool_vectors(vec_list, pooling_function=p_func)
         else:
             raise ExecuteError(f"encoder type {etype} not implemented yet")
 
